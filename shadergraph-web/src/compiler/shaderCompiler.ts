@@ -399,14 +399,14 @@ vec3 sg_checkerboard(vec2 uv, vec3 colorA, vec3 colorB, vec2 frequency) {
 
 float sg_ellipse(vec2 uv, float width, float height) {
   float d = length((uv * 2.0 - 1.0) / max(vec2(width, height), vec2(0.0001)));
-  return clamp((1.0 - d) / max(fwidth(d), 0.001), 0.0, 1.0);
+  return smoothstep(1.02, 0.98, d);
 }
 
 float sg_roundedRectangle(vec2 uv, float width, float height, float radius) {
   radius = max(min(min(abs(radius * 2.0), abs(width)), abs(height)), 1e-5);
   vec2 q = abs(uv * 2.0 - 1.0) - vec2(width, height) + radius;
   float d = length(max(q, 0.0)) / radius;
-  return clamp((1.0 - d) / max(fwidth(d), 0.001), 0.0, 1.0);
+  return smoothstep(1.02, 0.98, d);
 }
 
 float sg_polygon(vec2 uv, float sides, float width, float height) {
@@ -414,7 +414,7 @@ float sg_polygon(vec2 uv, float sides, float width, float height) {
   float a = atan(p.x, p.y) + 3.14159265;
   float r = 6.2831853 / max(sides, 3.0);
   float d = cos(floor(0.5 + a / r) * r - a) * length(p);
-  return clamp((1.0 - d) / max(fwidth(d), 0.001), 0.0, 1.0);
+  return smoothstep(1.02, 0.98, d);
 }
 
 vec3 sg_hueNormalized(vec3 col, float offset) {
@@ -1177,12 +1177,8 @@ export function compileToWebGL(
 varying vec2 vUv;
 varying vec3 vPositionOS;
 varying vec3 vPositionWS;
-varying vec3 vPositionVS;
 varying vec3 vNormalOS;
 varying vec3 vNormalWS;
-varying vec3 vTangentWS;
-varying vec3 vViewDirWS;
-varying vec4 vColor;
 
 void main() {
   vUv = uv;
@@ -1193,36 +1189,31 @@ void main() {
   vec3 sphereN = normalize(vec3(p.x, p.y, z + 0.15));
   vPositionOS = vec3(p, z);
   vPositionWS = vec3(p, z);
-  vPositionVS = vec3(p, z);
   vNormalOS = sphereN;
   vNormalWS = sphereN;
-  vTangentWS = normalize(vec3(1.0, 0.0, 0.0));
-  vViewDirWS = vec3(0.0, 0.0, 1.0);
-  vColor = vec4(uv.x, uv.y, 1.0 - uv.x, 1.0);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
     const fragmentShader = `
-precision highp float;
 varying vec2 vUv;
 varying vec3 vPositionOS;
 varying vec3 vPositionWS;
-varying vec3 vPositionVS;
 varying vec3 vNormalOS;
 varying vec3 vNormalWS;
-varying vec3 vTangentWS;
-varying vec3 vViewDirWS;
-varying vec4 vColor;
 
 ${uniformDecls.join('\n')}
 ${GLSL_HELPER_FUNCTIONS}
 
 void main() {
+  vec3 vPositionVS = vPositionWS;
+  vec3 vTangentWS = vec3(1.0, 0.0, 0.0);
+  vec3 vViewDirWS = vec3(0.0, 0.0, 1.0);
+  vec4 vColor = vec4(vUv.x, vUv.y, 1.0 - uv_x_safe(vUv.x), 1.0);
   ${bodyStatements.join('\n  ')}
   gl_FragColor = ${previewColorExpr};
 }
-`;
+`.replace('uv_x_safe(vUv.x)', 'vUv.x');
 
     return {
       vertexShader,
@@ -1271,33 +1262,28 @@ void main() {
 varying vec2 vUv;
 varying vec3 vPositionOS;
 varying vec3 vPositionWS;
-varying vec3 vPositionVS;
 varying vec3 vNormalOS;
 varying vec3 vNormalWS;
-varying vec3 vTangentWS;
-varying vec3 vViewDirWS;
-varying vec4 vColor;
 
-${uniformDecls.join('\n')}
-${GLSL_HELPER_FUNCTIONS}
+${hasVertexDisplacement ? uniformDecls.join('\n') : ''}
+${hasVertexDisplacement ? GLSL_HELPER_FUNCTIONS : ''}
 
 void main() {
   vUv = uv;
   vPositionOS = position;
   vNormalOS = normal;
   vNormalWS = normalize(mat3(modelMatrix) * normal);
-  vTangentWS = normalize(mat3(modelMatrix) * vec3(1.0, 0.0, 0.0));
   vec4 worldPosInitial = modelMatrix * vec4(position, 1.0);
   vPositionWS = worldPosInitial.xyz;
-  vPositionVS = (modelViewMatrix * vec4(position, 1.0)).xyz;
-  vViewDirWS = normalize(cameraPosition - worldPosInitial.xyz);
-  vColor = vec4(uv.x, uv.y, 1.0, 1.0);
+  vec3 vPositionVS = (modelViewMatrix * vec4(position, 1.0)).xyz;
+  vec3 vTangentWS = normalize(mat3(modelMatrix) * vec3(1.0, 0.0, 0.0));
+  vec3 vViewDirWS = normalize(cameraPosition - worldPosInitial.xyz);
+  vec4 vColor = vec4(uv.x, uv.y, 1.0, 1.0);
 
   ${hasVertexDisplacement ? bodyStatements.join('\n  ') : ''}
   vec3 displacedPos = ${vertexPosExpr};
   vec4 finalWorldPos = modelMatrix * vec4(displacedPos, 1.0);
   vPositionWS = finalWorldPos.xyz;
-  vViewDirWS = normalize(cameraPosition - finalWorldPos.xyz);
   gl_Position = projectionMatrix * viewMatrix * finalWorldPos;
 }
 `;
@@ -1317,21 +1303,21 @@ void main() {
     : '';
 
   const fragmentShader = `
-precision highp float;
 varying vec2 vUv;
 varying vec3 vPositionOS;
 varying vec3 vPositionWS;
-varying vec3 vPositionVS;
 varying vec3 vNormalOS;
 varying vec3 vNormalWS;
-varying vec3 vTangentWS;
-varying vec3 vViewDirWS;
-varying vec4 vColor;
 
 ${uniformDecls.join('\n')}
 ${GLSL_HELPER_FUNCTIONS}
 
 void main() {
+  vec3 vPositionVS = vPositionWS;
+  vec3 vTangentWS = normalize(vec3(vNormalWS.z, 0.0, -vNormalWS.x) + vec3(0.0001, 0.0, 0.0));
+  vec3 vViewDirWS = normalize(cameraPosition - vPositionWS);
+  vec4 vColor = vec4(vUv.x, vUv.y, 1.0 - vUv.x, 1.0);
+
   ${bodyStatements.join('\n  ')}
 
   vec3 baseCol = (${baseColorExpr}).rgb;
