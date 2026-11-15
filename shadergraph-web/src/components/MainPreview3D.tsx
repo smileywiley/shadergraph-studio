@@ -5,8 +5,19 @@ import {
   PreviewMeshType,
   EnvironmentPreset,
 } from '../types/shadergraph';
-import { compileToWebGL, hexToRgbNormalized } from '../compiler/shaderCompiler';
+import {
+  compileToWebGL,
+  getPropertyUniformName,
+  hexToRgbNormalized,
+  sanitizeIdentifier,
+} from '../compiler/shaderCompiler';
 import { getTextureEntry, subscribeTextures } from '../utils/textureManager';
+import {
+  attachThreeRendererDiagnostics,
+  logDiagnostic,
+  registerDiagnosticWebGLContext,
+  validateShaderProgram,
+} from '../utils/diagnosticsStore';
 import {
   Play,
   Pause,
@@ -54,6 +65,84 @@ const ENV_PRESETS: Record<
     ambient: 0.6,
   },
 };
+
+function createMaterialForProject(
+  project: ShaderGraphProject,
+  prevTime: number,
+  wireframe: boolean
+): { material: THREE.ShaderMaterial; referencedTextures: string[] } {
+  const compiled = compileToWebGL(project);
+
+  validateShaderProgram(
+    'MainPreview3D',
+    compiled.vertexShader,
+    compiled.fragmentShader
+  );
+
+  const uniforms: Record<string, { value: any }> = {
+    uTime: { value: prevTime },
+    uLightDir: { value: new THREE.Vector3(0.6, 0.8, 0.5).normalize() },
+    uLightColor: { value: new THREE.Vector3(1.0, 0.98, 0.95) },
+    uAmbientIntensity: { value: 0.65 },
+  };
+
+  for (const prop of project.properties) {
+    const uName = getPropertyUniformName(prop);
+    if (prop.type === 'float') {
+      uniforms[uName] = { value: Number(prop.value) || 0 };
+    } else if (prop.type === 'boolean') {
+      uniforms[uName] = { value: prop.value ? 1.0 : 0.0 };
+    } else if (prop.type === 'vector2') {
+      const v = Array.isArray(prop.value) ? prop.value : [0, 0];
+      uniforms[uName] = { value: new THREE.Vector2(v[0] || 0, v[1] || 0) };
+    } else if (prop.type === 'vector3') {
+      const v = Array.isArray(prop.value) ? prop.value : [0, 0, 0];
+      uniforms[uName] = { value: new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0) };
+    } else if (prop.type === 'vector4') {
+      const v = Array.isArray(prop.value) ? prop.value : [0, 0, 0, 1];
+      uniforms[uName] = {
+        value: new THREE.Vector4(v[0] || 0, v[1] || 0, v[2] || 0, v[3] ?? 1),
+      };
+    } else if (prop.type === 'color') {
+      const [r, g, b, a] = hexToRgbNormalized(prop.value || '#ffffff');
+      const mult = prop.mode === 'HDR' ? 1.35 : 1.0;
+      uniforms[uName] = { value: new THREE.Vector4(r * mult, g * mult, b * mult, a) };
+    }
+  }
+
+  for (const texKey of compiled.referencedTextures) {
+    const safeTex = sanitizeIdentifier(texKey);
+    uniforms[`uTex_${safeTex}`] = { value: getTextureEntry(texKey).texture };
+  }
+
+  const isTransparent = project.settings.surfaceType === 'Transparent';
+  const side =
+    project.settings.renderFace === 'Both'
+      ? THREE.DoubleSide
+      : project.settings.renderFace === 'Back'
+      ? THREE.BackSide
+      : THREE.FrontSide;
+
+  let blending: THREE.Blending = THREE.NormalBlending;
+  if (isTransparent) {
+    if (project.settings.blendMode === 'Additive') blending = THREE.AdditiveBlending;
+    else if (project.settings.blendMode === 'Multiply') blending = THREE.MultiplyBlending;
+  }
+
+  const material = new THREE.ShaderMaterial({
+    vertexShader: compiled.vertexShader,
+    fragmentShader: compiled.fragmentShader,
+    uniforms,
+    transparent: isTransparent,
+    depthWrite: true,
+    depthTest: true,
+    side,
+    blending,
+    wireframe,
+  });
+
+  return { material, referencedTextures: compiled.referencedTextures };
+}
 
 export const MainPreview3D: React.FC<MainPreview3DProps> = ({
   project,
@@ -103,21 +192,32 @@ export const MainPreview3D: React.FC<MainPreview3DProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(
-      42,
-      Math.max(1, container.clientWidth) / Math.max(1, container.clientHeight),
-      0.1,
-      100
-    );
+    const initW = Math.max(120, container.clientWidth || (isMobile ? 175 : 310));
+    const initH = Math.max(120, container.clientHeight || (isMobile ? 130 : 235));
+
+    const camera = new THREE.PerspectiveCamera(42, initW / initH, 0.1, 100);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
-      powerPreference: 'high-performance',
+      powerPreference: 'default',
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(container.clientWidth || 280, container.clientHeight || 240);
+    renderer.setSize(initW, initH);
+    attachThreeRendererDiagnostics(renderer, 'MainPreview3D');
+    registerDiagnosticWebGLContext(renderer.getContext());
+
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      logDiagnostic({
+        level: 'error',
+        source: 'MainPreview3D',
+        message: '3D Main Preview WebGL Context Lost on device.',
+      });
+    };
+    renderer.domElement.addEventListener('webglcontextlost', onContextLost);
+
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
@@ -125,20 +225,19 @@ export const MainPreview3D: React.FC<MainPreview3DProps> = ({
     // Subtle reference floor grid
     const grid = new THREE.GridHelper(4, 12, 0x2a3444, 0x1a202c);
     grid.position.y = -1.15;
+    grid.renderOrder = 1;
     scene.add(grid);
 
     const geom = new THREE.SphereGeometry(0.95, 64, 64);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uLightDir: { value: new THREE.Vector3(0.6, 0.8, 0.5).normalize() },
-        uLightColor: { value: new THREE.Vector3(1, 0.98, 0.95) },
-        uAmbientIntensity: { value: 0.65 },
-      },
-    });
-    materialRef.current = mat;
+    const { material: initMat } = createMaterialForProject(
+      project,
+      0,
+      stateRef.current.wireframe
+    );
+    materialRef.current = initMat;
 
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(geom, initMat);
+    mesh.renderOrder = 2;
     scene.add(mesh);
     meshRef.current = mesh;
 
@@ -165,15 +264,23 @@ export const MainPreview3D: React.FC<MainPreview3DProps> = ({
       camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
       camera.lookAt(0, 0, 0);
 
-      if (materialRef.current) {
-        materialRef.current.uniforms.uTime.value = accumTime;
+      if (materialRef.current && materialRef.current.uniforms) {
+        if (materialRef.current.uniforms.uTime) {
+          materialRef.current.uniforms.uTime.value = accumTime;
+        }
         const rad = (stateRef.current.lightAngle * Math.PI) / 180;
-        materialRef.current.uniforms.uLightDir.value
-          .set(Math.cos(rad), 0.75, Math.sin(rad))
-          .normalize();
+        if (materialRef.current.uniforms.uLightDir) {
+          materialRef.current.uniforms.uLightDir.value
+            .set(Math.cos(rad), 0.75, Math.sin(rad))
+            .normalize();
+        }
         const preset = ENV_PRESETS[stateRef.current.envPreset];
-        materialRef.current.uniforms.uLightColor.value.set(...preset.lightColor);
-        materialRef.current.uniforms.uAmbientIntensity.value = preset.ambient;
+        if (materialRef.current.uniforms.uLightColor) {
+          materialRef.current.uniforms.uLightColor.value.set(...preset.lightColor);
+        }
+        if (materialRef.current.uniforms.uAmbientIntensity) {
+          materialRef.current.uniforms.uAmbientIntensity.value = preset.ambient;
+        }
         materialRef.current.wireframe = stateRef.current.wireframe;
       }
 
@@ -194,6 +301,7 @@ export const MainPreview3D: React.FC<MainPreview3DProps> = ({
     return () => {
       cancelAnimationFrame(animId);
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       renderer.dispose();
     };
   }, []);
@@ -231,70 +339,12 @@ export const MainPreview3D: React.FC<MainPreview3DProps> = ({
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    const compiled = compileToWebGL(project);
     const prevTime = materialRef.current?.uniforms?.uTime?.value ?? 0;
-
-    const uniforms: Record<string, { value: any }> = {
-      uTime: { value: prevTime },
-      uLightDir: { value: new THREE.Vector3(0.6, 0.8, 0.5).normalize() },
-      uLightColor: { value: new THREE.Vector3(1.0, 0.98, 0.95) },
-      uAmbientIntensity: { value: 0.65 },
-    };
-
-    for (const prop of project.properties) {
-      const clean = prop.referenceName.replace(/[^a-zA-Z0-9_]/g, '_');
-      const uName = clean.startsWith('_') ? clean : `_${clean}`;
-      if (prop.type === 'float') {
-        uniforms[uName] = { value: Number(prop.value) || 0 };
-      } else if (prop.type === 'boolean') {
-        uniforms[uName] = { value: prop.value ? 1.0 : 0.0 };
-      } else if (prop.type === 'vector2') {
-        const v = Array.isArray(prop.value) ? prop.value : [0, 0];
-        uniforms[uName] = { value: new THREE.Vector2(v[0] || 0, v[1] || 0) };
-      } else if (prop.type === 'vector3') {
-        const v = Array.isArray(prop.value) ? prop.value : [0, 0, 0];
-        uniforms[uName] = { value: new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0) };
-      } else if (prop.type === 'vector4') {
-        const v = Array.isArray(prop.value) ? prop.value : [0, 0, 0, 1];
-        uniforms[uName] = {
-          value: new THREE.Vector4(v[0] || 0, v[1] || 0, v[2] || 0, v[3] ?? 1),
-        };
-      } else if (prop.type === 'color') {
-        const [r, g, b, a] = hexToRgbNormalized(prop.value || '#ffffff');
-        const mult = prop.mode === 'HDR' ? 1.35 : 1.0;
-        uniforms[uName] = { value: new THREE.Vector4(r * mult, g * mult, b * mult, a) };
-      }
-    }
-
-    for (const texKey of compiled.referencedTextures) {
-      const safeTex = texKey.replace(/[^a-zA-Z0-9_]/g, '_');
-      uniforms[`uTex_${safeTex}`] = { value: getTextureEntry(texKey).texture };
-    }
-
-    const isTransparent = project.settings.surfaceType === 'Transparent';
-    const side =
-      project.settings.renderFace === 'Both'
-        ? THREE.DoubleSide
-        : project.settings.renderFace === 'Back'
-        ? THREE.BackSide
-        : THREE.FrontSide;
-
-    let blending: THREE.Blending = THREE.NormalBlending;
-    if (isTransparent) {
-      if (project.settings.blendMode === 'Additive') blending = THREE.AdditiveBlending;
-      else if (project.settings.blendMode === 'Multiply') blending = THREE.MultiplyBlending;
-    }
-
-    const newMat = new THREE.ShaderMaterial({
-      vertexShader: compiled.vertexShader,
-      fragmentShader: compiled.fragmentShader,
-      uniforms,
-      transparent: isTransparent,
-      depthWrite: !isTransparent,
-      side,
-      blending,
-      wireframe: stateRef.current.wireframe,
-    });
+    const { material: newMat, referencedTextures } = createMaterialForProject(
+      project,
+      prevTime,
+      stateRef.current.wireframe
+    );
 
     if (materialRef.current) {
       materialRef.current.dispose();
@@ -303,8 +353,8 @@ export const MainPreview3D: React.FC<MainPreview3DProps> = ({
     mesh.material = newMat;
 
     const unsub = subscribeTextures(() => {
-      for (const texKey of compiled.referencedTextures) {
-        const safeTex = texKey.replace(/[^a-zA-Z0-9_]/g, '_');
+      for (const texKey of referencedTextures) {
+        const safeTex = sanitizeIdentifier(texKey);
         if (materialRef.current?.uniforms[`uTex_${safeTex}`]) {
           materialRef.current.uniforms[`uTex_${safeTex}`].value =
             getTextureEntry(texKey).texture;

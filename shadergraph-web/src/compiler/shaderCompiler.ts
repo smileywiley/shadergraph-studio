@@ -368,7 +368,7 @@ float sg_gradientNoise(vec2 uv, float scale) {
 
 vec2 sg_voronoiRandom(vec2 uv, float offset) {
   mat2 m = mat2(15.27, 47.63, 99.41, 89.98);
-  uv = fract(sin(uv * m) * 46839.32);
+  uv = fract(sin(uv * m) * 437.5854);
   return vec2(sin(uv.y * offset) * 0.5 + 0.5, cos(uv.x * offset) * 0.5 + 0.5);
 }
 
@@ -403,7 +403,7 @@ float sg_ellipse(vec2 uv, float width, float height) {
 }
 
 float sg_roundedRectangle(vec2 uv, float width, float height, float radius) {
-  radius = max(min(min(abs(radius * 2.0), abs(width)), abs(height)), 1e-5);
+  radius = max(min(min(abs(radius * 2.0), abs(width)), abs(height)), 0.0001);
   vec2 q = abs(uv * 2.0 - 1.0) - vec2(width, height) + radius;
   float d = length(max(q, 0.0)) / radius;
   return smoothstep(1.02, 0.98, d);
@@ -422,7 +422,7 @@ vec3 sg_hueNormalized(vec3 col, float offset) {
   vec4 P = mix(vec4(col.bg, K.wz), vec4(col.gb, K.xy), step(col.b, col.g));
   vec4 Q = mix(vec4(P.xyw, col.r), vec4(col.r, P.yzx), step(P.x, col.r));
   float D = Q.x - min(Q.w, Q.y);
-  float E = 1e-10;
+  float E = 0.0001;
   vec3 hsv = vec3(abs(Q.z + (Q.w - Q.y) / (6.0 * D + E)), D / (Q.x + E), Q.x);
   hsv.x = fract(hsv.x + offset);
   vec4 K2 = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -431,13 +431,16 @@ vec3 sg_hueNormalized(vec3 col, float offset) {
 }
 `;
 
-function sanitizeIdentifier(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_]/g, '_');
+export function sanitizeIdentifier(id: string): string {
+  const cleaned = String(id || 'id')
+    .replace(/[^a-zA-Z0-9]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || 'v';
 }
 
-function getPropertyUniformName(prop: BlackboardProperty): string {
-  const clean = prop.referenceName.replace(/[^a-zA-Z0-9_]/g, '_');
-  return clean.startsWith('_') ? clean : `_${clean}`;
+export function getPropertyUniformName(prop: BlackboardProperty): string {
+  return `_${sanitizeIdentifier(prop.referenceName || prop.id)}`;
 }
 
 /**
@@ -815,10 +818,10 @@ function emitNodeCode(
       break;
     case 'voronoi':
       lines.push(
-        `${vec2} ${outVar('_v')} = sg_voronoi(${getInputExpr('uv')}, ${getInputExpr('angleOffset')}, ${getInputExpr('cellDensity')});`
+        `${vec2} ${outVar('tmp_v')} = sg_voronoi(${getInputExpr('uv')}, ${getInputExpr('angleOffset')}, ${getInputExpr('cellDensity')});`
       );
-      lines.push(`float ${outVar('out')} = ${outVar('_v')}.x;`);
-      lines.push(`float ${outVar('cells')} = ${outVar('_v')}.y;`);
+      lines.push(`float ${outVar('out')} = ${outVar('tmp_v')}.x;`);
+      lines.push(`float ${outVar('cells')} = ${outVar('tmp_v')}.y;`);
       break;
     case 'checkerboard':
       lines.push(
@@ -856,10 +859,10 @@ function emitNodeCode(
       const uv = getInputExpr('uv');
       const center = getInputExpr('center');
       const rot = getInputExpr('rotation');
-      lines.push(`${vec2} ${outVar('_centered')} = (${uv}) - (${center});`);
-      lines.push(`float ${outVar('_s')} = sin(${rot}); float ${outVar('_c')} = cos(${rot});`);
+      lines.push(`${vec2} ${outVar('tmp_centered')} = (${uv}) - (${center});`);
+      lines.push(`float ${outVar('tmp_s')} = sin(${rot}); float ${outVar('tmp_c')} = cos(${rot});`);
       lines.push(
-        `${vec2} ${outVar('out')} = ${vec2}(${outVar('_centered')}.x * ${outVar('_c')} - ${outVar('_centered')}.y * ${outVar('_s')}, ${outVar('_centered')}.x * ${outVar('_s')} + ${outVar('_centered')}.y * ${outVar('_c')}) + (${center});`
+        `${vec2} ${outVar('out')} = ${vec2}(${outVar('tmp_centered')}.x * ${outVar('tmp_c')} - ${outVar('tmp_centered')}.y * ${outVar('tmp_s')}, ${outVar('tmp_centered')}.x * ${outVar('tmp_s')} + ${outVar('tmp_centered')}.y * ${outVar('tmp_c')}) + (${center});`
       );
       break;
     }
@@ -868,14 +871,14 @@ function emitNodeCode(
       const center = getInputExpr('center');
       const rScale = getInputExpr('radialScale');
       const lScale = getInputExpr('lengthScale');
-      lines.push(`${vec2} ${outVar('_delta')} = (${uv}) - (${center});`);
+      lines.push(`${vec2} ${outVar('tmp_delta')} = (${uv}) - (${center});`);
       lines.push(
-        `float ${outVar('_radius')} = length(${outVar('_delta')}) * 2.0 * (${rScale});`
+        `float ${outVar('tmp_radius')} = length(${outVar('tmp_delta')}) * 2.0 * (${rScale});`
       );
       lines.push(
-        `float ${outVar('_angle')} = (${atan2Fn}(${outVar('_delta')}.x, ${outVar('_delta')}.y) / 6.2831853 + 0.5) * (${lScale});`
+        `float ${outVar('tmp_angle')} = (${atan2Fn}(${outVar('tmp_delta')}.x, ${outVar('tmp_delta')}.y) / 6.2831853 + 0.5) * (${lScale});`
       );
-      lines.push(`${vec2} ${outVar('out')} = ${vec2}(${outVar('_radius')}, ${outVar('_angle')});`);
+      lines.push(`${vec2} ${outVar('out')} = ${vec2}(${outVar('tmp_radius')}, ${outVar('tmp_angle')});`);
       break;
     }
     case 'twirl': {
@@ -883,11 +886,11 @@ function emitNodeCode(
       const center = getInputExpr('center');
       const strength = getInputExpr('strength');
       const offset = getInputExpr('offset');
-      lines.push(`${vec2} ${outVar('_d')} = (${uv}) - (${center});`);
-      lines.push(`float ${outVar('_ang')} = (${strength}) * length(${outVar('_d')});`);
-      lines.push(`float ${outVar('_c')} = cos(${outVar('_ang')}); float ${outVar('_s')} = sin(${outVar('_ang')});`);
+      lines.push(`${vec2} ${outVar('tmp_d')} = (${uv}) - (${center});`);
+      lines.push(`float ${outVar('tmp_ang')} = (${strength}) * length(${outVar('tmp_d')});`);
+      lines.push(`float ${outVar('tmp_c')} = cos(${outVar('tmp_ang')}); float ${outVar('tmp_s')} = sin(${outVar('tmp_ang')});`);
       lines.push(
-        `${vec2} ${outVar('out')} = ${vec2}(${outVar('_c')} * ${outVar('_d')}.x - ${outVar('_s')} * ${outVar('_d')}.y, ${outVar('_s')} * ${outVar('_d')}.x + ${outVar('_c')} * ${outVar('_d')}.y) + (${center}) + (${offset});`
+        `${vec2} ${outVar('out')} = ${vec2}(${outVar('tmp_c')} * ${outVar('tmp_d')}.x - ${outVar('tmp_s')} * ${outVar('tmp_d')}.y, ${outVar('tmp_s')} * ${outVar('tmp_d')}.x + ${outVar('tmp_c')} * ${outVar('tmp_d')}.y) + (${center}) + (${offset});`
       );
       break;
     }
@@ -896,10 +899,10 @@ function emitNodeCode(
       const center = getInputExpr('center');
       const strength = getInputExpr('strength');
       const offset = getInputExpr('offset');
-      lines.push(`${vec2} ${outVar('_d')} = (${uv}) - (${center});`);
-      lines.push(`float ${outVar('_r2')} = dot(${outVar('_d')}, ${outVar('_d')});`);
+      lines.push(`${vec2} ${outVar('tmp_d')} = (${uv}) - (${center});`);
+      lines.push(`float ${outVar('tmp_r2')} = dot(${outVar('tmp_d')}, ${outVar('tmp_d')});`);
       lines.push(
-        `${vec2} ${outVar('out')} = (${uv}) + ${vec2}(${outVar('_d')}.y, -${outVar('_d')}.x) * (${strength}) * ${outVar('_r2')} + (${offset});`
+        `${vec2} ${outVar('out')} = (${uv}) + ${vec2}(${outVar('tmp_d')}.y, -${outVar('tmp_d')}.x) * (${strength}) * ${outVar('tmp_r2')} + (${offset});`
       );
       break;
     }
@@ -908,10 +911,10 @@ function emitNodeCode(
       const center = getInputExpr('center');
       const strength = getInputExpr('strength');
       const offset = getInputExpr('offset');
-      lines.push(`${vec2} ${outVar('_d')} = (${uv}) - (${center});`);
-      lines.push(`float ${outVar('_r2')} = dot(${outVar('_d')}, ${outVar('_d')});`);
+      lines.push(`${vec2} ${outVar('tmp_d')} = (${uv}) - (${center});`);
+      lines.push(`float ${outVar('tmp_r2')} = dot(${outVar('tmp_d')}, ${outVar('tmp_d')});`);
       lines.push(
-        `${vec2} ${outVar('out')} = (${uv}) + ${outVar('_d')} * (${strength}) * (${outVar('_r2')} * ${outVar('_r2')}) + (${offset});`
+        `${vec2} ${outVar('out')} = (${uv}) + ${outVar('tmp_d')} * (${strength}) * (${outVar('tmp_r2')} * ${outVar('tmp_r2')}) + (${offset});`
       );
       break;
     }
@@ -919,11 +922,11 @@ function emitNodeCode(
     // CHANNEL NODES
     case 'split': {
       const inExpr = castExpr(getInputExpr('in'), res?.inputs['in'] || '4', '4', lang);
-      lines.push(`${vec4} ${outVar('_v')} = ${inExpr};`);
-      lines.push(`float ${outVar('r')} = ${outVar('_v')}.x;`);
-      lines.push(`float ${outVar('g')} = ${outVar('_v')}.y;`);
-      lines.push(`float ${outVar('b')} = ${outVar('_v')}.z;`);
-      lines.push(`float ${outVar('a')} = ${outVar('_v')}.w;`);
+      lines.push(`${vec4} ${outVar('tmp_v')} = ${inExpr};`);
+      lines.push(`float ${outVar('r')} = ${outVar('tmp_v')}.x;`);
+      lines.push(`float ${outVar('g')} = ${outVar('tmp_v')}.y;`);
+      lines.push(`float ${outVar('b')} = ${outVar('tmp_v')}.z;`);
+      lines.push(`float ${outVar('a')} = ${outVar('tmp_v')}.w;`);
       break;
     }
     case 'combine': {
@@ -986,10 +989,10 @@ function emitNodeCode(
       const col = getInputExpr('in');
       const sat = getInputExpr('saturation');
       lines.push(
-        `float ${outVar('_luma')} = dot(${col}, ${vec3}(0.2126, 0.7152, 0.0722));`
+        `float ${outVar('tmp_luma')} = dot(${col}, ${vec3}(0.2126, 0.7152, 0.0722));`
       );
       lines.push(
-        `${vec3} ${outVar('out')} = ${mixFn}(${vec3}(${outVar('_luma')}, ${outVar('_luma')}, ${outVar('_luma')}), ${col}, ${sat});`
+        `${vec3} ${outVar('out')} = ${mixFn}(${vec3}(${outVar('tmp_luma')}, ${outVar('tmp_luma')}, ${outVar('tmp_luma')}), ${col}, ${sat});`
       );
       break;
     }
@@ -1013,9 +1016,9 @@ function emitNodeCode(
       const range = getInputExpr('range');
       const fuzz = getInputExpr('fuzziness');
       lines.push(
-        `float ${outVar('_mask')} = clamp((distance(${col}, ${from}) - (${range})) / max(${fuzz}, 0.0001), 0.0, 1.0);`
+        `float ${outVar('tmp_mask')} = clamp((distance(${col}, ${from}) - (${range})) / max(${fuzz}, 0.0001), 0.0, 1.0);`
       );
-      lines.push(`${vec3} ${outVar('out')} = ${mixFn}(${to}, ${col}, ${outVar('_mask')});`);
+      lines.push(`${vec3} ${outVar('out')} = ${mixFn}(${to}, ${col}, ${outVar('tmp_mask')});`);
       break;
     }
     case 'color-ramp': {
@@ -1026,9 +1029,9 @@ function emitNodeCode(
       const c0 = `${vec4}(${formatFloat(r0)}, ${formatFloat(g0)}, ${formatFloat(b0)}, ${formatFloat(a0)})`;
       const c1 = `${vec4}(${formatFloat(r1)}, ${formatFloat(g1)}, ${formatFloat(b1)}, ${formatFloat(a1)})`;
       const c2 = `${vec4}(${formatFloat(r2)}, ${formatFloat(g2)}, ${formatFloat(b2)}, ${formatFloat(a2)})`;
-      lines.push(`float ${outVar('_t')} = ${t};`);
+      lines.push(`float ${outVar('tmp_t')} = ${t};`);
       lines.push(
-        `${vec4} ${outVar('out')} = ${outVar('_t')} < 0.5 ? ${mixFn}(${c0}, ${c1}, ${outVar('_t')} * 2.0) : ${mixFn}(${c1}, ${c2}, (${outVar('_t')} - 0.5) * 2.0);`
+        `${vec4} ${outVar('out')} = ${outVar('tmp_t')} < 0.5 ? ${mixFn}(${c0}, ${c1}, ${outVar('tmp_t')} * 2.0) : ${mixFn}(${c1}, ${c2}, (${outVar('tmp_t')} - 0.5) * 2.0);`
       );
       break;
     }
@@ -1075,10 +1078,10 @@ function emitNodeCode(
       lines.push(`{`);
       lines.push(`  ${vec3} A = ${aExpr};`);
       lines.push(`  float B = ${bExpr};`);
-      lines.push(`  ${outVar('_cf')} = ${expr};`);
+      lines.push(`  ${outVar('tmp_cf')} = ${expr};`);
       lines.push(`}`);
-      lines.unshift(`${vec3} ${outVar('_cf')} = ${vec3}(0.0, 0.0, 0.0);`);
-      lines.push(`${vec3} ${outVar('out')} = ${outVar('_cf')};`);
+      lines.unshift(`${vec3} ${outVar('tmp_cf')} = ${vec3}(0.0, 0.0, 0.0);`);
+      lines.push(`${vec3} ${outVar('out')} = ${outVar('tmp_cf')};`);
       break;
     }
 
@@ -1128,16 +1131,30 @@ export function compileToWebGL(
     }
   }
 
+  // If compiling for a single node's 2D preview, collect only its upstream ancestors
+  let requiredNodeIds: Set<string> | null = null;
+  if (previewTargetNodeId) {
+    requiredNodeIds = new Set<string>();
+    const collectAncestors = (nid: string) => {
+      if (requiredNodeIds!.has(nid)) return;
+      requiredNodeIds!.add(nid);
+      for (const edge of project.edges) {
+        if (edge.targetNodeId === nid) {
+          collectAncestors(edge.sourceNodeId);
+        }
+      }
+    };
+    collectAncestors(previewTargetNodeId);
+  }
+
   // Emit node code in topological order
   const bodyStatements: string[] = [];
   for (const node of sortedNodes) {
     if (node.typeId === 'master-lit') continue;
+    if (requiredNodeIds && !requiredNodeIds.has(node.id)) continue;
     const code = emitNodeCode(node, project, portResolutions, 'glsl', referencedTextures);
     if (code) {
       bodyStatements.push(`// [${node.typeId}] ${node.id}\n  ${code}`);
-    }
-    if (previewTargetNodeId && node.id === previewTargetNodeId) {
-      break;
     }
   }
 
@@ -1157,6 +1174,26 @@ export function compileToWebGL(
         const texKey = String(targetNode.settings?.textureKey || 'uvgrid');
         const safeTex = sanitizeIdentifier(texKey);
         previewColorExpr = `texture2D(uTex_${safeTex}, vUv)`;
+      } else if (targetNode.typeId === 'property' && targetNode.propertyId) {
+        const prop = project.properties.find((p) => p.id === targetNode.propertyId);
+        if (prop?.type === 'texture2d') {
+          const texKey = String(prop.value || 'uvgrid');
+          const safeTex = sanitizeIdentifier(texKey);
+          previewColorExpr = `texture2D(uTex_${safeTex}, vUv)`;
+        } else if (def.outputs.length > 0) {
+          const firstOut = def.outputs[0];
+          const varName = `n_${sanitizeIdentifier(targetNode.id)}_${sanitizeIdentifier(firstOut.id)}`;
+          const outDim = portResolutions[targetNode.id]?.outputs[firstOut.id] || '1';
+          if (outDim === '1' || outDim === 'boolean') {
+            previewColorExpr = `vec4(vec3(${varName}), 1.0)`;
+          } else if (outDim === '2') {
+            previewColorExpr = `vec4(${varName}.xy, 0.0, 1.0)`;
+          } else if (outDim === '3') {
+            previewColorExpr = `vec4(${varName}.xyz, 1.0)`;
+          } else {
+            previewColorExpr = `vec4(${varName}.rgb, 1.0)`;
+          }
+        }
       } else if (def.outputs.length > 0) {
         const firstOut = def.outputs[0];
         const varName = `n_${sanitizeIdentifier(targetNode.id)}_${sanitizeIdentifier(firstOut.id)}`;
@@ -1209,11 +1246,11 @@ void main() {
   vec3 vPositionVS = vPositionWS;
   vec3 vTangentWS = vec3(1.0, 0.0, 0.0);
   vec3 vViewDirWS = vec3(0.0, 0.0, 1.0);
-  vec4 vColor = vec4(vUv.x, vUv.y, 1.0 - uv_x_safe(vUv.x), 1.0);
+  vec4 vColor = vec4(vUv.x, vUv.y, 1.0 - vUv.x, 1.0);
   ${bodyStatements.join('\n  ')}
   gl_FragColor = ${previewColorExpr};
 }
-`.replace('uv_x_safe(vUv.x)', 'vUv.x');
+`;
 
     return {
       vertexShader,
@@ -1272,11 +1309,11 @@ void main() {
   vUv = uv;
   vPositionOS = position;
   vNormalOS = normal;
-  vNormalWS = normalize(mat3(modelMatrix) * normal);
+  vNormalWS = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
   vec4 worldPosInitial = modelMatrix * vec4(position, 1.0);
   vPositionWS = worldPosInitial.xyz;
   vec3 vPositionVS = (modelViewMatrix * vec4(position, 1.0)).xyz;
-  vec3 vTangentWS = normalize(mat3(modelMatrix) * vec3(1.0, 0.0, 0.0));
+  vec3 vTangentWS = normalize((modelMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
   vec3 vViewDirWS = normalize(cameraPosition - worldPosInitial.xyz);
   vec4 vColor = vec4(uv.x, uv.y, 1.0, 1.0);
 

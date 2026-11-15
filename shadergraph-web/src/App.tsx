@@ -19,7 +19,14 @@ import { MainPreview3D } from './components/MainPreview3D';
 import { SidePanels } from './components/SidePanels';
 import { AddNodeModal } from './components/AddNodeModal';
 import { ExportModal, triggerFileDownload } from './components/ExportModal';
+import { DiagnosticsModal } from './components/DiagnosticsModal';
 import { initBuiltinTextures } from './utils/textureManager';
+import {
+  getDiagnostics,
+  installGlobalDiagnosticListeners,
+  onDiagnosticErrorAutoOpen,
+  subscribeDiagnostics,
+} from './utils/diagnosticsStore';
 import {
   Undo2,
   Redo2,
@@ -35,9 +42,11 @@ import {
   PanelLeftOpen,
   FilePlus2,
   Check,
+  AlertTriangle,
+  Activity,
 } from 'lucide-react';
 
-const STORAGE_KEY_ACTIVE = 'unity_shadergraph_web_active_v1';
+const STORAGE_KEY_ACTIVE = 'unity_shadergraph_web_active_v2';
 const STORAGE_KEY_SAVED_LIST = 'unity_shadergraph_web_saved_v1';
 
 function cloneProject(p: ShaderGraphProject): ShaderGraphProject {
@@ -46,6 +55,7 @@ function cloneProject(p: ShaderGraphProject): ShaderGraphProject {
 
 export function App() {
   useEffect(() => {
+    installGlobalDiagnosticListeners();
     initBuiltinTextures();
   }, []);
 
@@ -120,10 +130,28 @@ export function App() {
   const [exportModalTab, setExportModalTab] = useState<
     'shadergraph' | 'shaderlab' | 'glsl' | 'import'
   >('shadergraph');
+  const [diagnosticsModalOpen, setDiagnosticsModalOpen] = useState<boolean>(false);
+  const [diagErrorCount, setDiagErrorCount] = useState<number>(0);
   const [templatesDropdownOpen, setTemplatesDropdownOpen] = useState<boolean>(false);
   const [savedToast, setSavedToast] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const updateCounts = () => {
+      const errs = getDiagnostics().filter((d) => d.level === 'error').length;
+      setDiagErrorCount(errs);
+    };
+    updateCounts();
+    const unsubDiag = subscribeDiagnostics(updateCounts);
+    const unsubAuto = onDiagnosticErrorAutoOpen(() => {
+      setDiagnosticsModalOpen(true);
+    });
+    return () => {
+      unsubDiag();
+      unsubAuto();
+    };
+  }, []);
 
   // Responsive breakpoint listener
   useEffect(() => {
@@ -821,6 +849,36 @@ export function App() {
 
           <button
             type="button"
+            id="topbar-diagnostics-btn"
+            className="sg-topbar-btn"
+            onClick={() => setDiagnosticsModalOpen(true)}
+            title="WebGL & Shader Diagnostics / Error Log"
+            style={
+              diagErrorCount > 0
+                ? {
+                    borderColor: 'rgba(248, 113, 113, 0.7)',
+                    background: 'rgba(239, 68, 68, 0.22)',
+                    color: '#fca5a5',
+                  }
+                : undefined
+            }
+          >
+            {diagErrorCount > 0 ? (
+              <AlertTriangle size={14} color="#f87171" />
+            ) : (
+              <Activity size={14} color="#34d399" />
+            )}
+            <span>
+              {diagErrorCount > 0
+                ? `${diagErrorCount} Error${diagErrorCount > 1 ? 's' : ''}`
+                : isMobile
+                ? 'Diag'
+                : 'Diagnostics'}
+            </span>
+          </button>
+
+          <button
+            type="button"
             id="topbar-export-btn"
             className="sg-topbar-btn sg-topbar-export-cta"
             onClick={() => {
@@ -1117,7 +1175,7 @@ export function App() {
       )}
 
       {/* =========================================
-          MODALS (CREATE NODE & EXPORT/IMPORT)
+          MODALS (CREATE NODE, EXPORT/IMPORT, DIAGNOSTICS)
          ========================================= */}
       <AddNodeModal
         isOpen={addNodeOpen}
@@ -1138,6 +1196,21 @@ export function App() {
         onClose={() => setExportModalOpen(false)}
         project={project}
         onImportProject={(imported) => commitChange(() => imported)}
+      />
+
+      <DiagnosticsModal
+        isOpen={diagnosticsModalOpen}
+        onClose={() => setDiagnosticsModalOpen(false)}
+        project={project}
+        onResetToDefaultTemplate={() => {
+          try {
+            localStorage.removeItem(STORAGE_KEY_ACTIVE);
+            localStorage.removeItem('unity_shadergraph_web_active_v1');
+          } catch {
+            // ignore
+          }
+          setProject(cloneProject(STARTER_TEMPLATES[0]));
+        }}
       />
     </div>
   );
