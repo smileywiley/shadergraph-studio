@@ -1,32 +1,28 @@
-# React + TypeScript + Vite
+# ShaderGraph Studio (`shadergraph-web`)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Browser-based visual shader editor for creating, editing, previewing, and exporting **Unity Shader Graphs** (`.shadergraph` SGVersion 3 and standalone URP `.shader` HLSL files).
 
-Currently, two official plugins are available:
+**Live App:** [https://smileywiley.github.io/shadergraph-studio/](https://smileywiley.github.io/shadergraph-studio/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Quick Start
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Available Scripts
+
+- `npm run dev` — Start the Vite development server
+- `npm run build` — Run `tsc -b` type-checking and build the production bundle into `dist/`
+- `npm run lint` — Lint with `oxlint`
+- `npm run preview` — Serve the production `dist/` bundle locally
+
+## Key Modules
+
+- `src/nodes/nodeRegistry.ts` — 48 core Unity Shader Graph node definitions across Input, Math, Procedural, UV, Channel, Artistic, and Utility.
+- `src/compiler/shaderCompiler.ts` — Graph topological sorting, dynamic vector port resolution, WebGL GLSL compiler, and Unity URP ShaderLab/HLSL compiler.
+- `src/compiler/unityShaderGraphIO.ts` — Native Unity `.shadergraph` (SGVersion 3 multi-JSON) exporter and importer.
+- `src/components/GraphCanvas.tsx` — Touch- and mouse-friendly node canvas with Bezier wires, tap-to-connect, resizable/auto-shifting groups, and sticky notes.
+- `src/components/MainPreview3D.tsx` & `src/components/NodeInlinePreview.tsx` — Three.js 3D viewport and shared-context 2D inline node previews.
+- `src/components/DiagnosticsModal.tsx` & `src/utils/diagnosticsStore.ts` — WebGL shader compilation validator, GPU info, and error log modal.
