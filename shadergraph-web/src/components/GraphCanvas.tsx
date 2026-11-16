@@ -98,7 +98,13 @@ interface GraphCanvasProps {
       portType: ResolvedPortType;
     }
   ) => void;
-  onUpdateGroupPosition: (groupId: string, x: number, y: number) => void;
+  onUpdateGroupPosition: (
+    groupId: string,
+    x: number,
+    y: number,
+    childNodePositions?: Array<{ id: string; x: number; y: number }>,
+    childNotePositions?: Array<{ id: string; x: number; y: number }>
+  ) => void;
   onUpdateStickyNote: (
     noteId: string,
     patch: Partial<{ title: string; content: string; x: number; y: number }>
@@ -144,6 +150,8 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     startClientY: number;
     initialX: number;
     initialY: number;
+    groupChildNodes?: Array<{ id: string; initialX: number; initialY: number }>;
+    groupChildNotes?: Array<{ id: string; initialX: number; initialY: number }>;
     pinchInitialDist?: number;
     pinchInitialZoom?: number;
     pinchCenterX?: number;
@@ -332,10 +340,22 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     if (state.mode === 'group' && state.targetId) {
       const dx = (e.clientX - state.startClientX) / viewport.zoom;
       const dy = (e.clientY - state.startClientY) / viewport.zoom;
+      const childNodes = (state.groupChildNodes || []).map((cn) => ({
+        id: cn.id,
+        x: Math.round(cn.initialX + dx),
+        y: Math.round(cn.initialY + dy),
+      }));
+      const childNotes = (state.groupChildNotes || []).map((cs) => ({
+        id: cs.id,
+        x: Math.round(cs.initialX + dx),
+        y: Math.round(cs.initialY + dy),
+      }));
       onUpdateGroupPosition(
         state.targetId,
         Math.round(state.initialX + dx),
-        Math.round(state.initialY + dy)
+        Math.round(state.initialY + dy),
+        childNodes,
+        childNotes
       );
       return;
     }
@@ -597,6 +617,35 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
               style={{ backgroundColor: `${grp.color}22`, borderBottomColor: `${grp.color}44` }}
               onPointerDown={(e) => {
                 e.stopPropagation();
+                const gx1 = grp.position.x;
+                const gy1 = grp.position.y;
+                const gx2 = gx1 + grp.size.width;
+                const gy2 = gy1 + grp.size.height;
+
+                const groupChildNodes = project.nodes
+                  .filter((n) => {
+                    const cx = n.position.x + 90;
+                    const cy = n.position.y + 40;
+                    return cx >= gx1 && cx <= gx2 && cy >= gy1 && cy <= gy2;
+                  })
+                  .map((n) => ({
+                    id: n.id,
+                    initialX: n.position.x,
+                    initialY: n.position.y,
+                  }));
+
+                const groupChildNotes = project.stickyNotes
+                  .filter((s) => {
+                    const cx = s.position.x + s.size.width / 2;
+                    const cy = s.position.y + s.size.height / 2;
+                    return cx >= gx1 && cx <= gx2 && cy >= gy1 && cy <= gy2;
+                  })
+                  .map((s) => ({
+                    id: s.id,
+                    initialX: s.position.x,
+                    initialY: s.position.y,
+                  }));
+
                 dragStateRef.current = {
                   mode: 'group',
                   targetId: grp.id,
@@ -604,6 +653,8 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                   startClientY: e.clientY,
                   initialX: grp.position.x,
                   initialY: grp.position.y,
+                  groupChildNodes,
+                  groupChildNotes,
                 };
               }}
             >

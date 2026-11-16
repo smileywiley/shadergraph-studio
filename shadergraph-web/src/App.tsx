@@ -972,13 +972,33 @@ export function App() {
             onDeleteNode={handleDeleteNode}
             onDuplicateNode={handleDuplicateNode}
             onOpenAddNodeAt={handleOpenAddNodeAt}
-            onUpdateGroupPosition={(gid, x, y) => {
-              setProject((prev) => ({
-                ...prev,
-                groups: prev.groups.map((g) =>
-                  g.id === gid ? { ...g, position: { x, y } } : g
-                ),
-              }));
+            onUpdateGroupPosition={(gid, x, y, childNodePositions, childNotePositions) => {
+              setProject((prev) => {
+                const nodePosMap = childNodePositions
+                  ? new Map(childNodePositions.map((p) => [p.id, p]))
+                  : null;
+                const notePosMap = childNotePositions
+                  ? new Map(childNotePositions.map((p) => [p.id, p]))
+                  : null;
+                return {
+                  ...prev,
+                  groups: prev.groups.map((g) =>
+                    g.id === gid ? { ...g, position: { x, y } } : g
+                  ),
+                  nodes: nodePosMap
+                    ? prev.nodes.map((n) => {
+                        const np = nodePosMap.get(n.id);
+                        return np ? { ...n, position: { x: np.x, y: np.y } } : n;
+                      })
+                    : prev.nodes,
+                  stickyNotes: notePosMap
+                    ? prev.stickyNotes.map((s) => {
+                        const sp = notePosMap.get(s.id);
+                        return sp ? { ...s, position: { x: sp.x, y: sp.y } } : s;
+                      })
+                    : prev.stickyNotes,
+                };
+              });
             }}
             onUpdateStickyNote={(nid, patch) => {
               setProject((prev) => ({
