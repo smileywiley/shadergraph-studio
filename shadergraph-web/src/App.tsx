@@ -14,7 +14,7 @@ import {
   exportToUnityShaderGraph,
   importShaderGraphFile,
 } from './compiler/unityShaderGraphIO';
-import { GraphCanvas } from './components/GraphCanvas';
+import { GraphCanvas, type GroupBoundsPatch } from './components/GraphCanvas';
 import { MainPreview3D } from './components/MainPreview3D';
 import { SidePanels } from './components/SidePanels';
 import { AddNodeModal } from './components/AddNodeModal';
@@ -231,13 +231,36 @@ export function App() {
 
   // Node position update (without flooding undo history on every pixel move)
   const handleUpdateNodePosition = useCallback(
-    (nodeId: string, x: number, y: number) => {
-      setProject((prev) => ({
-        ...prev,
-        nodes: prev.nodes.map((n) =>
-          n.id === nodeId ? { ...n, position: { x, y } } : n
-        ),
-      }));
+    (
+      nodeId: string,
+      x: number,
+      y: number,
+      groupBoundsPatches?: GroupBoundsPatch[]
+    ) => {
+      setProject((prev) => {
+        const patchMap =
+          groupBoundsPatches && groupBoundsPatches.length > 0
+            ? new Map(groupBoundsPatches.map((p) => [p.id, p]))
+            : null;
+        return {
+          ...prev,
+          nodes: prev.nodes.map((n) =>
+            n.id === nodeId ? { ...n, position: { x, y } } : n
+          ),
+          groups: patchMap
+            ? prev.groups.map((g) => {
+                const gp = patchMap.get(g.id);
+                return gp
+                  ? {
+                      ...g,
+                      position: { x: gp.x, y: gp.y },
+                      size: { width: gp.width, height: gp.height },
+                    }
+                  : g;
+              })
+            : prev.groups,
+        };
+      });
     },
     []
   );
@@ -999,6 +1022,16 @@ export function App() {
                     : prev.stickyNotes,
                 };
               });
+            }}
+            onUpdateGroupBounds={(gid, x, y, width, height) => {
+              setProject((prev) => ({
+                ...prev,
+                groups: prev.groups.map((g) =>
+                  g.id === gid
+                    ? { ...g, position: { x, y }, size: { width, height } }
+                    : g
+                ),
+              }));
             }}
             onUpdateStickyNote={(nid, patch) => {
               setProject((prev) => ({

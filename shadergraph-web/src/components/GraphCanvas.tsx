@@ -71,12 +71,27 @@ export interface PendingConnection {
   isTapMode?: boolean;
 }
 
+export type GroupResizeEdge = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
+
+export interface GroupBoundsPatch {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface GraphCanvasProps {
   project: ShaderGraphProject;
   portResolutions: PortResolutionMap;
   selectedNodeIds: string[];
   onSelectNodes: (ids: string[]) => void;
-  onUpdateNodePosition: (nodeId: string, x: number, y: number) => void;
+  onUpdateNodePosition: (
+    nodeId: string,
+    x: number,
+    y: number,
+    groupBoundsPatches?: GroupBoundsPatch[]
+  ) => void;
   onUpdateNodeInput: (nodeId: string, portId: string, value: any) => void;
   onUpdateNodeSetting: (nodeId: string, key: string, value: any) => void;
   onToggleNodePreview: (nodeId: string) => void;
@@ -105,6 +120,13 @@ interface GraphCanvasProps {
     childNodePositions?: Array<{ id: string; x: number; y: number }>,
     childNotePositions?: Array<{ id: string; x: number; y: number }>
   ) => void;
+  onUpdateGroupBounds: (
+    groupId: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ) => void;
   onUpdateStickyNote: (
     noteId: string,
     patch: Partial<{ title: string; content: string; x: number; y: number }>
@@ -128,6 +150,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
   onDuplicateNode,
   onOpenAddNodeAt,
   onUpdateGroupPosition,
+  onUpdateGroupBounds,
   onUpdateStickyNote,
   onDeleteGroup,
   onDeleteStickyNote,
@@ -144,12 +167,30 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
 
   // Refs for gesture state
   const dragStateRef = useRef<{
-    mode: 'none' | 'pan' | 'node' | 'group' | 'note' | 'wire' | 'pinch';
+    mode: 'none' | 'pan' | 'node' | 'group' | 'group-resize' | 'note' | 'wire' | 'pinch';
     targetId?: string;
     startClientX: number;
     startClientY: number;
     initialX: number;
     initialY: number;
+    initialWidth?: number;
+    initialHeight?: number;
+    nodeWidth?: number;
+    nodeHeight?: number;
+    containingGroups?: Array<{
+      id: string;
+      initialX: number;
+      initialY: number;
+      initialW: number;
+      initialH: number;
+    }>;
+    resizeEdge?: GroupResizeEdge;
+    childBounds?: {
+      minLeft: number;
+      minTop: number;
+      maxRight: number;
+      maxBottom: number;
+    } | null;
     groupChildNodes?: Array<{ id: string; initialX: number; initialY: number }>;
     groupChildNotes?: Array<{ id: string; initialX: number; initialY: number }>;
     pinchInitialDist?: number;
@@ -329,11 +370,32 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     if (state.mode === 'node' && state.targetId) {
       const dx = (e.clientX - state.startClientX) / viewport.zoom;
       const dy = (e.clientY - state.startClientY) / viewport.zoom;
-      onUpdateNodePosition(
-        state.targetId,
-        Math.round(state.initialX + dx),
-        Math.round(state.initialY + dy)
-      );
+      const newX = Math.round(state.initialX + dx);
+      const newY = Math.round(state.initialY + dy);
+
+      let groupBoundsPatches: GroupBoundsPatch[] | undefined;
+      if (state.containingGroups && state.containingGroups.length > 0) {
+        const nw = state.nodeWidth || 210;
+        const nh = state.nodeHeight || 110;
+        const padX = 16;
+        const padTop = 38;
+        const padBottom = 16;
+        groupBoundsPatches = state.containingGroups.map((g) => {
+          const nextLeft = Math.min(g.initialX, newX - padX);
+          const nextTop = Math.min(g.initialY, newY - padTop);
+          const nextRight = Math.max(g.initialX + g.initialW, newX + nw + padX);
+          const nextBottom = Math.max(g.initialY + g.initialH, newY + nh + padBottom);
+          return {
+            id: g.id,
+            x: Math.round(nextLeft),
+            y: Math.round(nextTop),
+            width: Math.round(nextRight - nextLeft),
+            height: Math.round(nextBottom - nextTop),
+          };
+        });
+      }
+
+      onUpdateNodePosition(state.targetId, newX, newY, groupBoundsPatches);
       return;
     }
 
@@ -356,6 +418,52 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         Math.round(state.initialY + dy),
         childNodes,
         childNotes
+      );
+      return;
+    }
+
+    if (state.mode === 'group-resize' && state.targetId && state.resizeEdge) {
+      const dx = (e.clientX - state.startClientX) / viewport.zoom;
+      const dy = (e.clientY - state.startClientY) / viewport.zoom;
+      const initX = state.initialX;
+      const initY = state.initialY;
+      const initW = state.initialWidth || 300;
+      const initH = state.initialHeight || 200;
+      const initRight = initX + initW;
+      const initBottom = initY + initH;
+      const edge = state.resizeEdge;
+      const cb = state.childBounds;
+      const minW = 180;
+      const minH = 90;
+
+      let nextLeft = initX;
+      let nextTop = initY;
+      let nextRight = initRight;
+      let nextBottom = initBottom;
+
+      if (edge.includes('w')) {
+        const maxLeft = cb ? Math.min(initRight - minW, cb.minLeft) : initRight - minW;
+        nextLeft = Math.min(initX + dx, maxLeft);
+      }
+      if (edge.includes('e')) {
+        const minRight = cb ? Math.max(initX + minW, cb.maxRight) : initX + minW;
+        nextRight = Math.max(initRight + dx, minRight);
+      }
+      if (edge.includes('n')) {
+        const maxTop = cb ? Math.min(initBottom - minH, cb.minTop) : initBottom - minH;
+        nextTop = Math.min(initY + dy, maxTop);
+      }
+      if (edge.includes('s')) {
+        const minBottom = cb ? Math.max(initY + minH, cb.maxBottom) : initY + minH;
+        nextBottom = Math.max(initBottom + dy, minBottom);
+      }
+
+      onUpdateGroupBounds(
+        state.targetId,
+        Math.round(nextLeft),
+        Math.round(nextTop),
+        Math.round(nextRight - nextLeft),
+        Math.round(nextBottom - nextTop)
       );
       return;
     }
@@ -451,6 +559,16 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     setViewport({ x: nextX, y: nextY, zoom: nextZoom });
   };
 
+  const getNodeSize = useCallback((nodeId: string) => {
+    const el = containerRef.current?.querySelector(
+      `[data-node-card="${nodeId}"]`
+    ) as HTMLElement | null;
+    return {
+      width: el?.offsetWidth || 210,
+      height: el?.offsetHeight || 110,
+    };
+  }, []);
+
   // Start dragging a node header
   const handleNodeHeaderPointerDown = (
     e: React.PointerEvent<HTMLDivElement>,
@@ -458,6 +576,27 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
   ) => {
     e.stopPropagation();
     onSelectNodes([node.id]);
+
+    const { width: nodeWidth, height: nodeHeight } = getNodeSize(node.id);
+    const ncx = node.position.x + nodeWidth / 2;
+    const ncy = node.position.y + nodeHeight / 2;
+
+    const containingGroups = project.groups
+      .filter(
+        (g) =>
+          ncx >= g.position.x &&
+          ncx <= g.position.x + g.size.width &&
+          ncy >= g.position.y &&
+          ncy <= g.position.y + g.size.height
+      )
+      .map((g) => ({
+        id: g.id,
+        initialX: g.position.x,
+        initialY: g.position.y,
+        initialW: g.size.width,
+        initialH: g.size.height,
+      }));
+
     dragStateRef.current = {
       mode: 'node',
       targetId: node.id,
@@ -465,6 +604,9 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
       startClientY: e.clientY,
       initialX: node.position.x,
       initialY: node.position.y,
+      nodeWidth,
+      nodeHeight,
+      containingGroups,
     };
   };
 
@@ -671,6 +813,68 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                 <Trash2 size={12} />
               </button>
             </div>
+
+            {(['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as GroupResizeEdge[]).map(
+              (edge) => (
+                <div
+                  key={edge}
+                  className={`sg-group-resize-handle sg-group-resize-${edge}`}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    const gx1 = grp.position.x;
+                    const gy1 = grp.position.y;
+                    const gx2 = gx1 + grp.size.width;
+                    const gy2 = gy1 + grp.size.height;
+
+                    let minLeft = Infinity;
+                    let minTop = Infinity;
+                    let maxRight = -Infinity;
+                    let maxBottom = -Infinity;
+                    let hasChildren = false;
+
+                    for (const n of project.nodes) {
+                      const { width: nw, height: nh } = getNodeSize(n.id);
+                      const cx = n.position.x + nw / 2;
+                      const cy = n.position.y + nh / 2;
+                      if (cx >= gx1 && cx <= gx2 && cy >= gy1 && cy <= gy2) {
+                        hasChildren = true;
+                        minLeft = Math.min(minLeft, n.position.x - 12);
+                        minTop = Math.min(minTop, n.position.y - 36);
+                        maxRight = Math.max(maxRight, n.position.x + nw + 12);
+                        maxBottom = Math.max(maxBottom, n.position.y + nh + 12);
+                      }
+                    }
+
+                    for (const s of project.stickyNotes) {
+                      const cx = s.position.x + s.size.width / 2;
+                      const cy = s.position.y + s.size.height / 2;
+                      if (cx >= gx1 && cx <= gx2 && cy >= gy1 && cy <= gy2) {
+                        hasChildren = true;
+                        minLeft = Math.min(minLeft, s.position.x - 12);
+                        minTop = Math.min(minTop, s.position.y - 36);
+                        maxRight = Math.max(maxRight, s.position.x + s.size.width + 12);
+                        maxBottom = Math.max(maxBottom, s.position.y + s.size.height + 12);
+                      }
+                    }
+
+                    dragStateRef.current = {
+                      mode: 'group-resize',
+                      targetId: grp.id,
+                      resizeEdge: edge,
+                      startClientX: e.clientX,
+                      startClientY: e.clientY,
+                      initialX: grp.position.x,
+                      initialY: grp.position.y,
+                      initialWidth: grp.size.width,
+                      initialHeight: grp.size.height,
+                      childBounds: hasChildren
+                        ? { minLeft, minTop, maxRight, maxBottom }
+                        : null,
+                    };
+                  }}
+                />
+              )
+            )}
           </div>
         ))}
 

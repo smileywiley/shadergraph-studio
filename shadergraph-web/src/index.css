@@ -1005,6 +1005,76 @@ textarea {
   color: #bae6fd;
 }
 
+.sg-group-resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 6;
+}
+
+.sg-group-resize-n {
+  top: -5px;
+  left: 10px;
+  right: 10px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.sg-group-resize-s {
+  bottom: -5px;
+  left: 10px;
+  right: 10px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.sg-group-resize-e {
+  top: 10px;
+  bottom: 10px;
+  right: -5px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.sg-group-resize-w {
+  top: 10px;
+  bottom: 10px;
+  left: -5px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.sg-group-resize-nw {
+  top: -6px;
+  left: -6px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.sg-group-resize-ne {
+  top: -6px;
+  right: -6px;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.sg-group-resize-sw {
+  bottom: -6px;
+  left: -6px;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.sg-group-resize-se {
+  bottom: -6px;
+  right: -6px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
 .sg-sticky-note {
   position: absolute;
   border-radius: 8px;
